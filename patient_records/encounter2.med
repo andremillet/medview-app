@@ -1,0 +1,16 @@
+{
+  "age": "60",
+  "diagnosis": "G43",
+  "medical_conducts": {
+    "exam_requests": [
+      "Computed Tomography (CT) Brain"
+    ],
+    "prescriptions": [
+      "Amitriptyline"
+    ],
+    "referrals": []
+  },
+  "name": "patient 2",
+  "sex": "male",
+  "timestamp": "2025-03-29T14:23:03.519540Z"
+}

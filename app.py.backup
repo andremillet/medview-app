@@ -1,0 +1,517 @@
+from flask import Flask, render_template, request, jsonify, send_from_directory
+import os
+import json
+import datetime
+import requests
+from werkzeug.utils import secure_filename
+import threading
+import time
+
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = 'patient_records'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload size
+
+# Create upload directory if it doesn't exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# In-memory timeline storage
+# In a production app, this would be a database
+timeline = []
+
+# Keep track of medications in use
+medications_in_use = []
+
+# Keep track of patient diagnoses
+patient_diagnoses = []
+
+def load_existing_records():
+    """Load existing .med files from the patient_records directory"""
+    global timeline
+    timeline = []
+    for filename in os.listdir(app.config['UPLOAD_FOLDER']):
+        if filename.endswith('.med'):
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            try:
+                with open(filepath, 'r') as f:
+                    content = json.load(f)
+                    timeline.append({
+                        'filename': filename,
+                        'content': content,
+                        'timestamp': content.get('timestamp')
+                    })
+            except (json.JSONDecodeError, FileNotFoundError) as e:
+                print(f"Error loading {filename}: {str(e)}")
+    
+    # Sort timeline by timestamp
+    timeline.sort(key=lambda x: x['timestamp'])
+    
+    # Update medications in use and diagnoses
+    update_medications_in_use()
+    update_patient_diagnoses()
+
+def update_medications_in_use():
+    """Update medications in use based on existing records"""
+    global medications_in_use
+    # Load medications in use from storage if available
+    meds_path = os.path.join(app.config['UPLOAD_FOLDER'], 'medications_in_use.json')
+    if os.path.exists(meds_path):
+        try:
+            with open(meds_path, 'r') as f:
+                medications_in_use = json.load(f)
+        except json.JSONDecodeError:
+            medications_in_use = []
+    
+    # Keep track of all medications seen in encounters
+    all_meds = {}
+    
+    # Go through all encounters to find medications
+    for item in timeline:
+        prescriptions = item['content'].get('medical_conducts', {}).get('prescriptions', [])
+        timestamp = item['content'].get('timestamp')
+        
+        for med in prescriptions:
+            # If we already have this medication in our list
+            if any(m['name'] == med for m in medications_in_use):
+                # Medication already tracked, just update timestamp if needed
+                continue
+            
+            # If it's a new medication, add it to our tracked medications
+            if med not in all_meds:
+                all_meds[med] = timestamp
+                medications_in_use.append({
+                    "name": med,
+                    "regular_use": True,  # Default to regular use as requested
+                    "date_added": timestamp
+                })
+    
+    # Save to file
+    with open(meds_path, 'w') as f:
+        json.dump(medications_in_use, f, indent=2)
+
+def update_patient_diagnoses():
+    """Update patient diagnoses based on existing records"""
+    global patient_diagnoses
+    # Load patient diagnoses from storage if available
+    diagnoses_path = os.path.join(app.config['UPLOAD_FOLDER'], 'patient_diagnoses.json')
+    if os.path.exists(diagnoses_path):
+        try:
+            with open(diagnoses_path, 'r') as f:
+                patient_diagnoses = json.load(f)
+        except json.JSONDecodeError:
+            patient_diagnoses = []
+    
+    # Keep track of all diagnoses seen in encounters
+    all_diagnoses = set(d['name'] for d in patient_diagnoses)
+    
+    # Go through all encounters to find diagnoses
+    for item in sorted(timeline, key=lambda x: x['timestamp']):
+        diagnosis = item['content'].get('diagnosis')
+        timestamp = item['content'].get('timestamp')
+        
+        if diagnosis and diagnosis not in all_diagnoses:
+            all_diagnoses.add(diagnosis)
+            patient_diagnoses.append({
+                "name": diagnosis,
+                "date_diagnosed": timestamp,
+                "active": True  # Default to active
+            })
+    
+    # Save to file
+    with open(diagnoses_path, 'w') as f:
+        json.dump(patient_diagnoses, f, indent=2)
+
+# Function to periodically fetch from external API
+def fetch_from_api():
+    try:
+        # URL for the Neurology Patient Management System API
+        url = "https://roa-mrsz.onrender.com/api/medfiles?period=6months"
+        response = requests.get(url)
+        
+        if response.status_code == 200:
+            med_files = response.json()
+            
+            for file_data in med_files:
+                filename = file_data['filename']
+                content = file_data['content']
+                
+                # Save to local file system
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(filename))
+                
+                with open(filepath, 'w') as f:
+                    json.dump(content, f, indent=2)
+            
+            # Reload timeline with new data
+            load_existing_records()
+            print(f"Successfully fetched {len(med_files)} records from API")
+        else:
+            print(f"API request failed with status code {response.status_code}")
+    
+    except Exception as e:
+        print(f"Error fetching from API: {str(e)}")
+
+@app.route('/')
+def index():
+    """Render the main page"""
+    return render_template('index.html')
+
+@app.route('/api/timeline')
+def get_timeline():
+    """Return the patient's timeline as JSON"""
+    return jsonify(timeline)
+
+@app.route('/api/medications-in-use')
+def get_medications_in_use():
+    """Return the list of medications in use"""
+    return jsonify(medications_in_use)
+
+@app.route('/api/diagnoses')
+def get_diagnoses():
+    """Return the list of patient diagnoses"""
+    return jsonify(patient_diagnoses)
+
+@app.route('/api/medications-in-use', methods=['POST'])
+def update_medication_status():
+    """Update the regular use status of a medication"""
+    data = request.json
+    medication_name = data.get('name')
+    regular_use = data.get('regular_use')
+    
+    if medication_name is None or regular_use is None:
+        return jsonify({'error': 'Missing medication name or regular use status'}), 400
+    
+    global medications_in_use
+    
+    # Update the medication
+    for med in medications_in_use:
+        if med['name'] == medication_name:
+            med['regular_use'] = regular_use
+            break
+    
+    # Save to file
+    meds_path = os.path.join(app.config['UPLOAD_FOLDER'], 'medications_in_use.json')
+    with open(meds_path, 'w') as f:
+        json.dump(medications_in_use, f, indent=2)
+    
+    return jsonify({'success': True})
+
+@app.route('/api/diagnoses', methods=['POST'])
+def update_diagnosis_status():
+    """Update the active status of a diagnosis"""
+    data = request.json
+    diagnosis_name = data.get('name')
+    active = data.get('active')
+    
+    if diagnosis_name is None or active is None:
+        return jsonify({'error': 'Missing diagnosis name or active status'}), 400
+    
+    global patient_diagnoses
+    
+    # Update the diagnosis
+    for diag in patient_diagnoses:
+        if diag['name'] == diagnosis_name:
+            diag['active'] = active
+            break
+    
+    # Save to file
+    diagnoses_path = os.path.join(app.config['UPLOAD_FOLDER'], 'patient_diagnoses.json')
+    with open(diagnoses_path, 'w') as f:
+        json.dump(patient_diagnoses, f, indent=2)
+    
+    return jsonify({'success': True})
+
+@app.route('/api/medications-in-use/add', methods=['POST'])
+def add_medication_in_use():
+    """Add a new medication to the medications in use list"""
+    data = request.json
+    medication_name = data.get('name')
+    regular_use = data.get('regular_use', True)
+    
+    if not medication_name:
+        return jsonify({'error': 'Missing medication name'}), 400
+    
+    global medications_in_use
+    
+    # Check if medication already exists
+    for med in medications_in_use:
+        if med['name'] == medication_name:
+            med['regular_use'] = regular_use
+            break
+    else:
+        # Add new medication
+        medications_in_use.append({
+            'name': medication_name,
+            'regular_use': regular_use,
+            'date_added': datetime.datetime.utcnow().isoformat()
+        })
+    
+    # Save to file
+    meds_path = os.path.join(app.config['UPLOAD_FOLDER'], 'medications_in_use.json')
+    with open(meds_path, 'w') as f:
+        json.dump(medications_in_use, f, indent=2)
+    
+    return jsonify({'success': True})
+
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """Handle .med file upload"""
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    
+    files = request.files.getlist('file')
+    
+    if not files or files[0].filename == '':
+        return jsonify({'error': 'No files selected'}), 400
+    
+    saved_files = []
+    
+    for file in files:
+        if file and file.filename.endswith('.med'):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+            
+            # Try to parse the file and add to timeline
+            try:
+                with open(filepath, 'r') as f:
+                    content = json.load(f)
+                    saved_files.append(filename)
+            except json.JSONDecodeError:
+                os.remove(filepath)  # Remove invalid file
+                return jsonify({'error': f'Invalid JSON in file {filename}'}), 400
+    
+    # Reload timeline with new data
+    load_existing_records()
+    
+    return jsonify({'message': f'Successfully uploaded {len(saved_files)} files', 'files': saved_files})
+
+@app.route('/api/fetch', methods=['POST'])
+def trigger_api_fetch():
+    """Trigger a fetch from the external API"""
+    threading.Thread(target=fetch_from_api).start()
+    return jsonify({'message': 'API fetch started'})
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    """Download a specific .med file"""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
+
+@app.route('/api/changes')
+def get_changes():
+    """Identify changes in diagnoses and medications between encounters"""
+    if len(timeline) < 2:
+        return jsonify({'diagnosis_changes': [], 'medication_changes': []})
+    
+    # Sort timeline by timestamp
+    sorted_timeline = sorted(timeline, key=lambda x: x['timestamp'])
+    
+    diagnosis_changes = []
+    medication_changes = []
+    
+    # Collect all unique diagnoses and medications
+    all_diagnoses = {}
+    all_medications = {}
+    
+    for item in sorted_timeline:
+        encounter = item['content']
+        diagnosis = encounter.get('diagnosis')
+        timestamp = encounter.get('timestamp')
+        
+        # Check if this is a new diagnosis
+        if diagnosis and diagnosis not in all_diagnoses:
+            all_diagnoses[diagnosis] = timestamp
+            if all_diagnoses:  # Not the first diagnosis ever
+                diagnosis_changes.append({
+                    'diagnosis': diagnosis,
+                    'timestamp': timestamp
+                })
+        
+        # Check medications
+        prescriptions = encounter.get('medical_conducts', {}).get('prescriptions', [])
+        for med in prescriptions:
+            if med not in all_medications:
+                all_medications[med] = timestamp
+                if all_medications:  # Not the first medication ever
+                    medication_changes.append({
+                        'medication': med,
+                        'timestamp': timestamp
+                    })
+    
+    return jsonify({
+        'diagnosis_changes': diagnosis_changes,
+        'medication_changes': medication_changes
+    })
+
+# In newer Flask versions (2.3+), we use this pattern instead of before_first_request
+with app.app_context():
+    # Load existing records
+    load_existing_records()
+
+# Create a function to initialize the app on startup
+def initialize_app():
+    # Fetch from API after a short delay to ensure app is fully started
+    time.sleep(1)
+    with app.app_context():
+        fetch_from_api()
+
+if __name__ == '__main__':
+    # Start the API fetching in a background thread
+    threading.Thread(target=initialize_app).start()
+    app.run(debug=True)
+    
+    # Reload timeline with new data
+    load_existing_records()
+    
+    return jsonify({'message': f'Successfully uploaded {len(saved_files)} files', 'files': saved_files})
+
+@app.route('/api/fetch', methods=['POST'])
+def trigger_api_fetch():
+    """Trigger a fetch from the external API"""
+    threading.Thread(target=fetch_from_api).start()
+    return jsonify({'message': 'API fetch started'})
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    """Download a specific .med file"""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
+
+@app.route('/api/changes')
+def get_changes():
+    """Identify changes in diagnoses and medications between encounters"""
+    if len(timeline) < 2:
+        return jsonify({'diagnosis_changes': [], 'medication_changes': []})
+    
+    # Sort timeline by timestamp
+    sorted_timeline = sorted(timeline, key=lambda x: x['timestamp'])
+    
+    diagnosis_changes = []
+    medication_changes = []
+    
+    # Collect all unique diagnoses and medications
+    all_diagnoses = {}
+    all_medications = {}
+    
+    for item in sorted_timeline:
+        encounter = item['content']
+        diagnosis = encounter.get('diagnosis')
+        timestamp = encounter.get('timestamp')
+        
+        # Check if this is a new diagnosis
+        if diagnosis and diagnosis not in all_diagnoses:
+            all_diagnoses[diagnosis] = timestamp
+            if all_diagnoses:  # Not the first diagnosis ever
+                diagnosis_changes.append({
+                    'diagnosis': diagnosis,
+                    'timestamp': timestamp
+                })
+        
+        # Check medications
+        prescriptions = encounter.get('medical_conducts', {}).get('prescriptions', [])
+        for med in prescriptions:
+            if med not in all_medications:
+                all_medications[med] = timestamp
+                if all_medications:  # Not the first medication ever
+                    medication_changes.append({
+                        'medication': med,
+                        'timestamp': timestamp
+                    })
+    
+    return jsonify({
+        'diagnosis_changes': diagnosis_changes,
+        'medication_changes': medication_changes
+    })
+
+# In newer Flask versions (2.3+), we use this pattern instead of before_first_request
+with app.app_context():
+    # Load existing records
+    load_existing_records()
+
+# Create a function to initialize the app on startup
+def initialize_app():
+    # Fetch from API after a short delay to ensure app is fully started
+    time.sleep(1)
+    with app.app_context():
+        fetch_from_api()
+
+if __name__ == '__main__':
+    # Start the API fetching in a background thread
+    threading.Thread(target=initialize_app).start()
+    app.run(debug=True)return jsonify({'error': f'Invalid JSON in file {filename}'}), 400
+    
+    # Reload timeline with new data
+    load_existing_records()
+    
+    return jsonify({'message': f'Successfully uploaded {len(saved_files)} files', 'files': saved_files})
+
+@app.route('/api/fetch', methods=['POST'])
+def trigger_api_fetch():
+    """Trigger a fetch from the external API"""
+    threading.Thread(target=fetch_from_api).start()
+    return jsonify({'message': 'API fetch started'})
+
+@app.route('/download/<filename>')
+def download_file(filename):
+    """Download a specific .med file"""
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
+
+@app.route('/api/changes')
+def get_changes():
+    """Identify changes in diagnoses and medications between encounters"""
+    if len(timeline) < 2:
+        return jsonify({'diagnosis_changes': [], 'medication_changes': []})
+    
+    # Sort timeline by timestamp
+    sorted_timeline = sorted(timeline, key=lambda x: x['timestamp'])
+    
+    diagnosis_changes = []
+    medication_changes = []
+    
+    # Collect all unique diagnoses and medications
+    all_diagnoses = {}
+    all_medications = {}
+    
+    for item in sorted_timeline:
+        encounter = item['content']
+        diagnosis = encounter.get('diagnosis')
+        timestamp = encounter.get('timestamp')
+        
+        # Check if this is a new diagnosis
+        if diagnosis and diagnosis not in all_diagnoses:
+            all_diagnoses[diagnosis] = timestamp
+            if all_diagnoses:  # Not the first diagnosis ever
+                diagnosis_changes.append({
+                    'diagnosis': diagnosis,
+                    'timestamp': timestamp
+                })
+        
+        # Check medications
+        prescriptions = encounter.get('medical_conducts', {}).get('prescriptions', [])
+        for med in prescriptions:
+            if med not in all_medications:
+                all_medications[med] = timestamp
+                if all_medications:  # Not the first medication ever
+                    medication_changes.append({
+                        'medication': med,
+                        'timestamp': timestamp
+                    })
+    
+    return jsonify({
+        'diagnosis_changes': diagnosis_changes,
+        'medication_changes': medication_changes
+    })
+
+# In newer Flask versions (2.3+), we use this pattern instead of before_first_request
+with app.app_context():
+    # Load existing records
+    load_existing_records()
+
+# Create a function to initialize the app on startup
+def initialize_app():
+    # Fetch from API after a short delay to ensure app is fully started
+    time.sleep(1)
+    with app.app_context():
+        fetch_from_api()
+
+if __name__ == '__main__':
+    # Start the API fetching in a background thread
+    threading.Thread(target=initialize_app).start()
+    app.run(debug=True)

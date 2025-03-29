@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Patient Timeline</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <!-- PWA manifest file -->
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <!-- iOS support -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="Patient Timeline">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/icons/icon-152x152.png') }}">
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#3498db">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Patient Medical Timeline</h1>
+            <div class="header-actions">
+                <button id="fetch-api" class="btn"><i class="fas fa-cloud-download-alt"></i> Fetch from API</button>
+                <div class="file-upload">
+                    <input type="file" id="file-upload" accept=".med" multiple>
+                    <label for="file-upload" class="btn"><i class="fas fa-file-upload"></i> Upload .med Files</label>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <div class="patient-summary" id="patient-summary">
+                <div class="avatar">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <div class="info">
+                    <h2 id="patient-name">Loading patient data...</h2>
+                    <div class="details">
+                        <span id="patient-age"></span>
+                        <span id="patient-sex"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="timeline"><i class="fas fa-history"></i> <span>Timeline</span></button>
+                <button class="tab-btn" data-tab="medications"><i class="fas fa-pills"></i> <span>Medications</span></button>
+                <button class="tab-btn" data-tab="diagnoses"><i class="fas fa-stethoscope"></i> <span>Diagnoses</span></button>
+                <button class="tab-btn" data-tab="changes"><i class="fas fa-bell"></i> <span>Changes</span></button>
+            </div>
+
+            <div class="tab-content" id="timeline-tab">
+                <div class="timeline-container">
+                    <div class="timeline" id="timeline">
+                        <!-- Timeline items will be dynamically inserted here -->
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i> Loading timeline...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="medications-tab">
+                <div class="medications-container">
+                    <h3>Current Medications</h3>
+                    <div id="medications-list" class="medications-list">
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i> Loading medications...
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tab-content" id="diagnoses-tab">
+                <div class="diagnoses-container">
+                    <h3>Patient Diagnoses</h3>
+                    <div id="diagnoses-list" class="diagnoses-list">
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i> Loading diagnoses...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-content" id="changes-tab">
+                <div class="changes-container">
+                    <div class="change-section">
+                        <h3>New Diagnoses</h3>
+                        <div id="diagnosis-changes" class="changes-list">
+                            <div class="loading">
+                                <i class="fas fa-spinner fa-spin"></i> Loading diagnosis changes...
+                            </div>
+                        </div>
+                    </div>
+                    <div class="change-section">
+                        <h3>New Medications</h3>
+                        <div id="medication-changes" class="changes-list">
+                            <div class="loading">
+                                <i class="fas fa-spinner fa-spin"></i> Loading medication changes...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Back to top button -->
+            <button class="back-to-top" id="back-to-top">
+                <i class="fas fa-arrow-up"></i>
+            </button>
+        </main>
+
+        <aside class="side-panel" id="side-panel">
+            <div class="side-panel-handle"></div>
+            <h3>Encounter Details</h3>
+            <div class="encounter-details" id="encounter-details">
+                <p>Select an encounter to view details</p>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Modal for uploading confirmation -->
+    <div class="modal" id="upload-modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Upload Status</h2>
+            <p id="upload-message"></p>
+        </div>
+    </div>
+
+    <!-- Modal for adding medications -->
+    <div class="modal" id="medication-modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>New Medication</h2>
+            <p>Is this medication for regular use?</p>
+            <div class="modal-actions">
+                <button id="med-regular-yes" class="btn">Yes, Regular Use</button>
+                <button id="med-regular-no" class="btn btn-secondary">No, Temporary</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <!-- PWA service worker registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => {
+                        console.log('ServiceWorker registration successful');
+                    })
+                    .catch(err => {
+                        console.log('ServiceWorker registration failed: ', err);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>

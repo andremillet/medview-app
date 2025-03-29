@@ -1,0 +1,18 @@
+{
+  "age": "74",
+  "diagnosis": "Parkinson\u2019s Disease",
+  "medical_conducts": {
+    "exam_requests": [
+      "Magnetic Resonance Imaging (MRI) Brain"
+    ],
+    "prescriptions": [
+      "Levodopa/Carbidopa"
+    ],
+    "referrals": [
+      "Physical Medicine and Rehabilitation (PM&R)"
+    ]
+  },
+  "name": "pat1",
+  "sex": "male",
+  "timestamp": "2025-03-27T23:15:40.336957Z"
+}
