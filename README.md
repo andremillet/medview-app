@@ -105,15 +105,4 @@ To connect to a different API source:
 1. Modify the `fetch_from_api` function in `app.py` with the new URL
 2. Update the parsing logic to match the new data format
 
-## License
-MIT License - See LICENSE file for details. Features
-
-- **Timeline Visualization**: View all patient encounters in chronological order
-- **Multiple Input Sources**:
-  - Upload individual or multiple .med files
-  - Fetch data from an external API (Neurology Patient Management System)
-- **Detailed View**: Click on any encounter to see full details
-- **Responsive Design**: Works on desktop and mobile devices
-- **Easy Deployment**: Ready to deploy on Render.com or local environments
-
 ##
